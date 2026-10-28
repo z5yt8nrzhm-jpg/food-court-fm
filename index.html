@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FF2E93" />
+<title>Food Court FM</title>
+<meta name="description" content="A station where everyone hears the same second." />
+<style>
+  html, body, #root { margin: 0; padding: 0; min-height: 100%; background: #FF2E93; }
+  body { -webkit-tap-highlight-color: transparent; }
+  #boot {
+    position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+    font: 500 13px/1.7 ui-monospace, "DM Mono", monospace; color: #2B0B3F;
+    letter-spacing: .16em; padding: 24px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot">WARMING UP THE BOARD…</div>
+
+<!--
+  No build step, no bundler, no server. One HTML file, one JSX file, done.
+  React and friends come from a CDN; Babel compiles the JSX in the browser.
+  Fine for a station this size — swap in Vite later if you outgrow it.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1"
+  }
+}
+</script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<script>
+/*
+  The app talks to window.storage. Inside Anthropic's artifact viewer that
+  already exists and is shared between listeners. Out here it doesn't, so we
+  stand up a local one backed by the browser's own storage. Same interface,
+  so app.jsx needs no changes — the producer's notes just live on this device
+  instead of being shared. Bake them into a file when you go live.
+*/
+(function () {
+  if (window.storage) return;
+  var mem = {};
+  var ok = (function () {
+    try { localStorage.setItem('__fcfm', '1'); localStorage.removeItem('__fcfm'); return true; }
+    catch (e) { return false; }   // private mode, embedded webviews
+  })();
+  var read = function (k) { return ok ? localStorage.getItem(k) : (k in mem ? mem[k] : null); };
+  var save = function (k, v) { if (ok) localStorage.setItem(k, v); else mem[k] = v; };
+
+  window.storage = {
+    get: function (key) {
+      var v = read('fcfm:' + key);
+      if (v === null) return Promise.reject(new Error('not found'));
+      return Promise.resolve({ key: key, value: v, shared: false });
+    },
+    set: function (key, value) {
+      save('fcfm:' + key, String(value));
+      return Promise.resolve({ key: key, value: value, shared: false });
+    },
+    delete: function (key) {
+      if (ok) localStorage.removeItem('fcfm:' + key); else delete mem['fcfm:' + key];
+      return Promise.resolve({ key: key, deleted: true, shared: false });
+    },
+    list: function (prefix) {
+      var keys = [];
+      if (ok) {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k.indexOf('fcfm:') === 0) keys.push(k.slice(5));
+        }
+      } else { keys = Object.keys(mem).map(function (k) { return k.slice(5); }); }
+      if (prefix) keys = keys.filter(function (k) { return k.indexOf(prefix) === 0; });
+      return Promise.resolve({ keys: keys, prefix: prefix, shared: false });
+    },
+  };
+})();
+</script>
+
+<script type="module">
+const boot = document.getElementById('boot');
+const fail = (msg) => {
+  boot.innerHTML = 'OFF AIR<br><br><span style="letter-spacing:0;text-transform:none">'
+    + msg + '</span>';
+};
+
+try {
+  const res = await fetch('./app.jsx');
+  if (!res.ok) throw new Error('app.jsx not found (' + res.status + ')');
+  const source = await res.text();
+
+  const { code } = Babel.transform(source, {
+    filename: 'app.jsx',
+    sourceType: 'module',
+    presets: [['react', { runtime: 'automatic' }]],
+  });
+
+  const url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+  const { default: App } = await import(url);
+  URL.revokeObjectURL(url);
+
+  const [{ default: React }, { createRoot }] = await Promise.all([
+    import('react'), import('react-dom/client'),
+  ]);
+
+  boot.remove();
+  createRoot(document.getElementById('root')).render(React.createElement(App));
+} catch (err) {
+  console.error(err);
+  fail(
+    String(err.message).includes('Failed to fetch') || String(err.message).includes('not found')
+      ? 'Open this through a local server, not by double-clicking the file. Browsers block a page from reading its neighbours over file://.<br><br>In this folder run:<br><b>npx serve</b><br>then open the address it prints.'
+      : err.message
+  );
+}
+</script>
+</body>
+</html>
